@@ -3,105 +3,132 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Print Monitor - REVERSE CALL</title>
+    <title>3D Monitor - Auto Reverse</title>
     <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <style>
-        body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; }
-        video { width: 100%; max-width: 500px; background: #000; border-radius: 10px; border: 2px solid #444; }
-        button { padding: 15px; margin: 10px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; width: 80%; max-width: 300px; background: #27ae60; color: white; }
-        #debug-log { background: #000; color: #00ff00; font-family: monospace; padding: 10px; height: 180px; overflow-y: scroll; font-size: 11px; border: 1px solid #333; text-align: left; margin-top: 20px; }
+        body { font-family: 'Segoe UI', sans-serif; background: #121212; color: white; text-align: center; padding: 20px; margin: 0; }
+        .container { max-width: 600px; margin: 0 auto; }
+        video { width: 100%; background: #000; border-radius: 12px; border: 2px solid #333; margin-top: 15px; }
+        .btn { padding: 20px; font-size: 18px; border-radius: 12px; border: none; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 15px; }
+        .btn-reg { background: #e67e22; color: white; }
+        .btn-rip { background: #2980b9; color: white; }
+        #debug-log { background: #000; color: #00ff00; font-family: monospace; padding: 10px; height: 180px; overflow-y: scroll; font-size: 11px; border: 1px solid #333; text-align: left; margin-top: 20px; border-radius: 8px; }
+        .hidden { display: none; }
+        .status { color: #f1c40f; font-weight: bold; margin: 10px 0; font-size: 1.2em; }
     </style>
 </head>
 <body>
 
-    <h2 id="title">Inizializzazione...</h2>
-    <video id="v" autoplay playsinline muted></video>
+    <div class="container">
+        <h2>3D Print Monitor v4</h2>
 
-    <div id="controls">
+        <div id="role-selection">
+            <button class="btn btn-reg" onclick="initRegistratore()">🎥 IMPOSTA COME REGISTRATORE<br><small>(iPhone a casa - TRASMETTE)</small></button>
+            <button class="btn btn-rip" onclick="initRiproduttore()">💻 IMPOSTA COME RIPRODUTTORE<br><small>(PC ufficio/viaggio - RICEVE)</small></button>
         </div>
 
-    <div id="debug-log"></div>
+        <div id="ui-display" class="hidden">
+            <div class="status" id="status-text">Inizializzazione...</div>
+            <video id="v-main" autoplay playsinline muted></video>
+        </div>
+
+        <div id="debug-log">Seleziona un ruolo...</div>
+    </div>
 
     <script>
-        const ID_PC = "3D PRINTER";
-        const ID_IPHONE = "ARCHO50";
-        const isPhone = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+        const ID_CAMERA = "STAMPANTE_3D_IPHONE";
+        const ID_MONITOR = "STAMPANTE_3D_PC";
+        
         const logBox = document.getElementById('debug-log');
-        const videoEl = document.getElementById('v');
+        const statusText = document.getElementById('status-text');
+        const videoEl = document.getElementById('v-main');
+        let peer, localStream, currentCall;
 
         function log(msg) {
             logBox.innerHTML += `<div>[${new Date().toLocaleTimeString()}] ${msg}</div>`;
             logBox.scrollTop = logBox.scrollHeight;
         }
 
-        const config = {
+        const peerConfig = {
             'iceServers': [
                 { 'urls': 'stun:stun.l.google.com:19302' },
                 { 'urls': 'turn:openrelay.metered.ca:80', 'username': 'openrelayproject', 'credential': 'openrelayproject' }
             ]
         };
 
-        const peer = new Peer(isPhone ? ID_IPHONE : ID_PC, { config: config, debug: 2 });
-        let localStream;
+        // --- LATO IPHONE (REGISTRATORE) ---
+        async function initRegistratore() {
+            document.getElementById('role-selection').classList.add('hidden');
+            document.getElementById('ui-display').classList.remove('hidden');
+            log("Configurazione Registratore...");
 
-        peer.on('open', (id) => {
-            log("✅ Online con ID: " + id);
-            setupUI();
-        });
-
-        function setupUI() {
-            const container = document.getElementById('controls');
-            if (isPhone) {
-                document.getElementById('title').innerText = "📱 TRASMETTITORE (iPhone)";
-                container.innerHTML = `
-                    <button onclick="startCamera()">1. ACCENDI CAMERA</button>
-                    <button onclick="callPC()" style="background:#2980b9">2. TRASMETTI AL PC</button>
-                `;
-            } else {
-                document.getElementById('title').innerText = "💻 RICEVITORE (PC)";
-                log("In attesa di segnale dall'iPhone...");
-            }
-        }
-
-        async function startCamera() {
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
                 videoEl.srcObject = localStream;
-                log("🎥 Camera pronta.");
+                log("🎥 Camera OK.");
+
+                peer = new Peer(ID_CAMERA, { config: peerConfig, debug: 1 });
+
+                peer.on('open', (id) => {
+                    log("✅ Registratore Online.");
+                    statusText.innerText = "CERCO IL PC...";
+                    // Inizia a "bussare" al PC ogni 5 secondi
+                    setInterval(tentativoChiamata, 5000);
+                });
+
+                peer.on('error', (err) => log("⚠️ Peer Status: " + err.type));
+
             } catch (e) { log("❌ Errore Camera: " + e.message); }
         }
 
-        function callPC() {
-            if (!localStream) return log("❌ Accendi prima la camera!");
-            log("📞 Chiamata in corso verso il PC...");
-            const call = peer.call(ID_PC, localStream);
+        function tentativoChiamata() {
+            if (currentCall && currentCall.open) return; // Se siamo già in chiamata, non fare nulla
+
+            log("📡 Cerco di inviare video al PC...");
+            const call = peer.call(ID_MONITOR, localStream);
             
-            handleCall(call);
+            if (call) {
+                currentCall = call;
+                call.on('stream', () => {
+                    log("🔗 Collegato al PC!");
+                    statusText.innerText = "🔴 IN TRASMISSIONE";
+                });
+                call.on('close', () => {
+                    log("🔌 PC scollegato.");
+                    statusText.innerText = "CERCO IL PC...";
+                    currentCall = null;
+                });
+            }
         }
 
-        peer.on('call', (call) => {
-            log("📞 Chiamata in arrivo dall'iPhone! Rispondo...");
-            call.answer(); 
-            handleCall(call);
-        });
+        // --- LATO PC (RIPRODUTTORE) ---
+        function initRiproduttore() {
+            document.getElementById('role-selection').classList.add('hidden');
+            document.getElementById('ui-display').classList.remove('hidden');
+            log("Configurazione Monitor...");
 
-        function handleCall(call) {
-            call.on('stream', (remoteStream) => {
-                log("📺 STREAM RICEVUTO! Avvio video...");
-                videoEl.srcObject = remoteStream;
-                videoEl.play();
+            peer = new Peer(ID_MONITOR, { config: peerConfig, debug: 1 });
+
+            peer.on('open', (id) => {
+                log("✅ Monitor Online. In attesa di segnale dall'iPhone...");
+                statusText.innerText = "IN ATTESA DELLA CAMERA...";
             });
 
-            const pc = call.peerConnection;
-            pc.oniceconnectionstatechange = () => {
-                log("🔌 Stato Connessione: " + pc.iceConnectionState);
-                if(pc.iceConnectionState === 'failed') {
-                    log("❌ Connessione fallita. Il firewall blocca il video.");
-                }
-            };
-        }
+            peer.on('call', (call) => {
+                log("📞 Camera trovata! Ricezione video...");
+                call.answer(); // Risponde alla chiamata dell'iPhone
+                
+                call.on('stream', (remoteStream) => {
+                    log("📺 VIDEO RICEVUTO!");
+                    statusText.innerText = "🟢 DIRETTA ATTIVA";
+                    videoEl.srcObject = remoteStream;
+                    videoEl.muted = false; // Se vuoi l'audio
+                    videoEl.play();
+                });
+            });
 
-        peer.on('error', (err) => log("❌ PeerJS Error: " + err.type));
+            peer.on('error', (err) => log("❌ Errore: " + err.type));
+        }
     </script>
 </body>
 </html>
