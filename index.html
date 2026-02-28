@@ -3,82 +3,93 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Monitor FIX</title>
+    <title>3D Monitor - Final Fix</title>
     <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; background: #111; color: #fff; font-family: sans-serif; text-align: center; }
-        .box { padding: 20px; border: 1px solid #333; margin: 10px; border-radius: 10px; }
-        button { padding: 15px; width: 80%; margin: 10px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; }
-        #log { font-size: 12px; color: #0f0; background: #000; padding: 10px; margin: 10px; text-align: left; height: 100px; overflow-y: scroll; }
-        video { width: 90%; max-width: 600px; background: #000; border: 2px solid #444; }
+        body { margin: 0; background: #000; color: #fff; font-family: sans-serif; text-align: center; }
+        .box { padding: 15px; background: #222; margin: 10px; border-radius: 10px; }
+        button { padding: 15px; width: 90%; margin: 5px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; color: white; }
+        #log { font-size: 11px; color: #0f0; background: #000; padding: 10px; margin: 5px; text-align: left; height: 120px; overflow-y: auto; border: 1px solid #333; }
+        video { width: 100%; max-width: 600px; background: #111; border-bottom: 2px solid #e74c3c; }
     </style>
 </head>
 <body>
 
-    <h2>3D PRINT HUB - FIX</h2>
+    <video id="v" autoplay playsinline muted></video>
     
-    <div id="log">Status: In attesa di comando...</div>
+    <div id="log">Status: Pronto. Carica il sito su HTTPS!</div>
 
-    <div id="controls">
-        <div class="box">
-            <button style="background: #e74c3c;" onclick="startAsCamera()">1. AVVIA COME TELEFONO</button>
-        </div>
-        <div class="box">
-            <button style="background: #3498db;" onclick="startAsPC()">2. AVVIA COME PC (Guarda)</button>
-        </div>
+    <div class="box">
+        <button style="background: #e74c3c;" onclick="startAsCamera()">1. TELEFONO (Invia Video Retro)</button>
+        <button style="background: #3498db;" onclick="startAsPC()">2. PC (Ricevi Video)</button>
+        <button style="background: #555;" onclick="location.reload()">Reset Pagina</button>
     </div>
 
-    <video id="v" autoplay playsinline muted></video>
-
     <script>
-        const ID_STAMPANTE = "STAMPANTE_3D_DI_PRO"; // ID FISSO
-        const log = (msg) => { document.getElementById('log').innerHTML += "<br>> " + msg; };
+        const ID_STAMPANTE = "MIA_STAMPANTE_3D_XYZ"; // ID univoco
+        const log = (msg) => { 
+            const l = document.getElementById('log');
+            l.innerHTML += "<br>> " + msg;
+            l.scrollTop = l.scrollHeight;
+        };
         const v = document.getElementById('v');
-        let peer;
+        let localStream;
 
-        // --- FUNZIONE TELEFONO ---
+        // --- FUNZIONE TELEFONO (STREAMER) ---
         async function startAsCamera() {
-            log("Inizializzazione Camera...");
-            peer = new Peer(ID_STAMPANTE);
-            
+            log("Accesso alla camera posteriore...");
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-                v.srcObject = stream;
-                log("Camera attiva localmente.");
-
-                peer.on('open', (id) => log("Telefono Online! ID: " + id));
-                peer.on('call', (call) => {
-                    log("Ricevuta chiamata dal PC! Rispondo...");
-                    call.answer(stream);
+                // Forziamo la camera posteriore (environment)
+                localStream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { facingMode: { exact: "environment" } }, 
+                    audio: false 
+                }).catch(async () => {
+                    log("Camera 'environment' non trovata, provo standard...");
+                    return await navigator.mediaDevices.getUserMedia({ video: true });
                 });
-                peer.on('error', (err) => log("Errore: " + err.type));
+
+                v.srcObject = localStream;
+                log("Camera attiva sul telefono.");
+
+                const peer = new Peer(ID_STAMPANTE);
+                
+                peer.on('open', (id) => log("Telefono Online! Aspetto il PC..."));
+                
+                peer.on('call', (call) => {
+                    log("Chiamata ricevuta! Invio video...");
+                    call.answer(localStream); 
+                });
+
+                peer.on('error', (err) => log("Errore Peer: " + err.type));
+
             } catch (e) {
-                log("ERRORE CAMERA: " + e.message);
-                alert("Devi usare HTTPS e dare i permessi!");
+                log("ERRORE: " + e.message);
+                alert("Errore camera. Assicurati di essere in HTTPS!");
             }
         }
 
-        // --- FUNZIONE PC ---
+        // --- FUNZIONE PC (RECEIVER) ---
         function startAsPC() {
-            log("Inizializzazione PC...");
-            peer = new Peer(); // ID Casuale per il PC
+            log("Connessione in corso...");
+            const peer = new Peer(); 
 
             peer.on('open', () => {
-                log("PC pronto. Chiamo la stampante...");
+                log("PC pronto. Cerco la stampante...");
+                // Il PC deve inviare un "finto stream" per attivare la risposta
                 const call = peer.call(ID_STAMPANTE, new MediaStream());
                 
                 call.on('stream', (remoteStream) => {
-                    log("STREAM RICEVUTO! Connessione riuscita.");
+                    log("!!! VIDEO RICEVUTO !!!");
                     v.srcObject = remoteStream;
-                    v.muted = false;
+                    v.play(); // Forza l'avvio del video
                 });
-
-                setTimeout(() => {
-                    if (!v.srcObject) log("Nessuna risposta... il telefono è acceso?");
-                }, 5000);
             });
 
             peer.on('error', (err) => log("Errore PC: " + err.type));
+            
+            setTimeout(() => {
+                if (!v.srcObject) log("Ancora niente... controlla che il telefono sia in 'TRASMISSIONE'");
+            }, 6000);
         }
     </script>
 </body>
