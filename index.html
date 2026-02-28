@@ -1,6 +1,20 @@
 <!DOCTYPE html>
 <html lang="it">
 <head>
+<style>
+    .embedded #role-selection, .embedded #debug-log, .embedded h2 { display: none; }
+    .embedded video { width: 100vw; height: 100vh; object-fit: cover; margin: 0; border: none; border-radius: 0; }
+    body.embedded { padding: 0; overflow: hidden; background: black; }
+</style>
+
+<script>
+    // Se aggiungi ?view=embed all'URL, la pagina diventa "solo video"
+    if (window.location.search.includes('view=embed')) {
+        document.body.classList.add('embedded');
+        // Auto-avvio per il PC quando incorporato
+        window.onload = () => { initRiproduttore(); setTimeout(connettiACamera, 2000); };
+    }
+</script>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>3D Monitor - Auto Reverse</title>
