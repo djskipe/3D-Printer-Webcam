@@ -1,89 +1,59 @@
-<!DOCTYPE html>
-<html lang="it">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Monitor Direct</title>
-    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
-    <style>
-        body { margin: 0; background: #000; color: #0f0; font-family: monospace; text-align: center; overflow: hidden; }
-        #status { background: rgba(0,0,0,0.8); padding: 10px; position: fixed; top:0; width: 100%; z-index: 10; font-size: 12px; }
-        video { width: 100vw; height: 100vh; object-fit: contain; }
-        .controls { position: fixed; bottom: 20px; width: 100%; display: flex; justify-content: center; gap: 10px; }
-        button { padding: 15px 25px; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
-        .btn-cam { background: #e74c3c; color: white; }
-        .btn-pc { background: #3498db; color: white; }
-    </style>
-</head>
-<body>
-
-    <div id="status">SISTEMA PRONTO - Carica su HTTPS</div>
-    <video id="v" autoplay playsinline muted></video>
-
-    <div class="controls" id="ui">
-        <button class="btn-cam" onclick="startStreamer()">TRASMETTI (Telefono)</button>
-        <button class="btn-pc" onclick="startReceiver()">RICEVI (PC)</button>
-    </div>
-
-    <script>
-        // --- CONFIGURAZIONE ---
-        const CANALE_UNICO = "STAMPANTE_3D_DI_PRO_XYZ"; // Il tuo "indirizzo" virtuale
+const CANALE_UNICO = "STAMPANTE_3D_DI_PRO_XYZ"; 
         const config = { 'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] };
         const v = document.getElementById('v');
         const status = document.getElementById('status');
         const ui = document.getElementById('ui');
 
-        // --- FUNZIONE PER TELEFONO ---
         async function startStreamer() {
             ui.style.display = 'none';
-            status.innerText = "Avvio camera posteriore...";
-            
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: { ideal: "environment" } }, 
                     audio: false 
                 });
                 v.srcObject = stream;
-
                 const peer = new Peer(CANALE_UNICO, { config: config });
-                
-                peer.on('open', () => status.innerText = "🔴 IN TRASMISSIONE... (Canale: " + CANALE_UNICO + ")");
+                peer.on('open', () => status.innerText = "🔴 TRASMETTENDO...");
                 peer.on('call', (call) => {
-                    status.innerText = "CONNESSO! Invio video...";
+                    status.innerText = "PC COLLEGATO! Invio in corso...";
                     call.answer(stream);
                 });
-                
-                peer.on('error', (err) => {
-                    if (err.type === 'unavailable-id') {
-                        alert("L'ID è già occupato! Se hai altre schede aperte, chiudile.");
-                        location.reload();
-                    }
-                });
-            } catch (e) {
-                alert("Errore camera: " + e.message);
-                location.reload();
-            }
+            } catch (e) { alert("Errore camera: " + e.message); }
         }
 
-        // --- FUNZIONE PER PC ---
         function startReceiver() {
             ui.style.display = 'none';
-            status.innerText = "Ricerca trasmissione in corso...";
+            status.innerText = "In attesa del segnale...";
             const peer = new Peer({ config: config });
 
             peer.on('open', () => {
-                // Tenta la connessione ogni 2 secondi finché non trova il telefono
+                // Funzione di chiamata ricorsiva
                 const connect = () => {
+                    if (v.srcObject) return; // Se abbiamo già il video, fermati
+                    
                     const call = peer.call(CANALE_UNICO, new MediaStream());
+                    
                     call.on('stream', (remoteStream) => {
-                        status.innerText = "🔵 RICEZIONE ATTIVA";
+                        console.log("Stream ricevuto!");
+                        status.innerText = "🔵 VIDEO AGGANCIATO";
                         v.srcObject = remoteStream;
-                        v.play();
+                        
+                        // TRUCCO: Forza l'esecuzione del video
+                        v.load();
+                        const playPromise = v.play();
+                        if (playPromise !== undefined) {
+                            playPromise.catch(() => {
+                                status.innerText = "Clicca ovunque per vedere il video";
+                                window.addEventListener('click', () => v.play(), {once: true});
+                            });
+                        }
                     });
                 };
-                setInterval(() => { if(!v.srcObject) connect(); }, 2000);
+
+                // Prova a connettersi ogni 2 secondi
+                const interval = setInterval(() => {
+                    if (v.srcObject) clearInterval(interval);
+                    else connect();
+                }, 2000);
             });
         }
-    </script>
-</body>
-</html>
