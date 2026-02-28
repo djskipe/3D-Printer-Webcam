@@ -1,307 +1,85 @@
 <!DOCTYPE html>
-<html lang="it">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Print Monitor - TURN Forzato</title>
+    <meta charset="utf-8">
+    <title>Test WebRTC PeerJS</title>
     <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body {
-            margin: 0;
-            background: #111;
-            color: #0f0;
-            font-family: 'Courier New', monospace;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-        }
-        #status-bar {
-            background: #222;
-            padding: 12px;
-            border-bottom: 2px solid #444;
-            font-size: 14px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        #status {
-            color: #0f0;
-        }
-        #ice-status {
-            color: #ffaa00;
-            font-size: 12px;
-        }
-        video {
-            flex: 1;
-            width: 100%;
-            background: #000;
-            object-fit: contain;
-        }
-        .controls {
-            padding: 15px;
-            background: #222;
-            border-top: 2px solid #444;
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-        button {
-            padding: 12px 24px;
-            border: none;
-            border-radius: 6px;
-            font-weight: bold;
-            cursor: pointer;
-            font-size: 14px;
-        }
-        .btn-cam { background: #e74c3c; color: white; }
-        .btn-pc { background: #3498db; color: white; }
-        .btn-test { background: #2ecc71; color: white; }
-        .debug-box {
-            background: #1a1a1a;
-            color: #ccc;
-            padding: 8px;
-            font-size: 11px;
-            max-height: 80px;
-            overflow-y: auto;
-            border-top: 1px solid #333;
-            font-family: monospace;
-        }
+        body { font-family: Arial; padding: 20px; background: #f0f0f0; }
+        video { width: 100%; max-width: 600px; background: black; }
+        button { padding: 10px; margin: 5px; }
+        #status { color: blue; margin: 10px 0; }
     </style>
 </head>
 <body>
-    <div id="status-bar">
-        <span id="status">⚙️ IN ATTESA</span>
-        <span id="ice-status">ICE: -</span>
-    </div>
-    
+    <h2>Test WebRTC con PeerJS</h2>
+    <p>Usa un ID fisso: <strong>TEST_123</strong></p>
+    <button onclick="startStreamer()">📱 TRASMETTI (telefono)</button>
+    <button onclick="startReceiver()">🖥️ RICEVI (PC)</button>
+    <div id="status">⚪ In attesa</div>
     <video id="video" autoplay playsinline muted></video>
-    
-    <div class="controls">
-        <button class="btn-cam" onclick="startStreamer()">📱 TRASMETTI (telefono)</button>
-        <button class="btn-pc" onclick="startReceiver()">🖥️ RICEVI (PC)</button>
-        <button class="btn-test" onclick="testLocal()">🧪 TEST LOCALE (due finestre)</button>
-    </div>
-
-    <div class="debug-box" id="debug">
-        [debug] Pronto...
-    </div>
 
     <script>
-        // --- CONFIGURAZIONE ---
-        const CANALE_UNICO = "STAMPANTE_3D_" + Math.random().toString(36).substring(7); // Cambia casuale per evitare conflitti
-        // Mostra il canale generato (così sai quale usare)
-        document.getElementById('debug').innerText = "Canale: " + CANALE_UNICO;
+        const CHANNEL_ID = "TEST_123"; // stesso ID per entrambi
+        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        let peer, call;
 
-        // Server TURN affidabile (OpenRelay)
-        const peerConfig = {
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' },
-                { urls: 'stun:stun1.l.google.com:19302' },
-                // TURN con credential (affidabile)
-                { 
-                    urls: 'turn:openrelay.metered.ca:80', 
-                    username: 'openrelayproject', 
-                    credential: 'openrelayproject' 
-                },
-                { 
-                    urls: 'turn:openrelay.metered.ca:443', 
-                    username: 'openrelayproject', 
-                    credential: 'openrelayproject' 
-                }
-            ],
-            // Forza l'uso di TURN (iceTransportPolicy: 'relay' se vuoi solo TURN, ma lascia 'all' per test)
-            iceTransportPolicy: 'all' // 'relay' forzerebbe solo TURN
-        };
-
-        const video = document.getElementById('video');
-        const statusEl = document.getElementById('status');
-        const iceStatusEl = document.getElementById('ice-status');
-        const debugEl = document.getElementById('debug');
-
-        let currentPeer = null;
-        let currentCall = null;
-
-        function debugLog(msg) {
+        function log(msg) {
+            document.getElementById('status').innerText = msg;
             console.log(msg);
-            debugEl.innerText = new Date().toLocaleTimeString() + ' - ' + msg + '\n' + debugEl.innerText.slice(0, 300);
         }
 
-        function setStatus(msg, color) {
-            statusEl.innerText = msg;
-            if (color) statusEl.style.color = color;
-        }
-
-        function setIceStatus(stats) {
-            iceStatusEl.innerText = 'ICE: ' + stats;
-        }
-
-        function cleanup() {
-            if (currentCall) {
-                currentCall.close();
-                currentCall = null;
-            }
-            if (currentPeer) {
-                currentPeer.destroy();
-                currentPeer = null;
-            }
-        }
-
-        // --- TRASMETTITORE ---
+        // --- TRASMETTITORE (telefono) ---
         async function startStreamer() {
-            cleanup();
-            setStatus("📸 Accesso camera...", "#ffaa00");
-            debugLog("Richiesta camera");
-
             try {
+                log("Richiedo camera...");
                 const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: { ideal: "environment" } }, 
+                    video: { facingMode: "environment" }, // posteriore
                     audio: false 
                 });
-                video.srcObject = stream;
-                debugLog("Camera OK, flusso ottenuto");
+                document.getElementById('video').srcObject = stream;
+                log("Camera OK. Creo peer...");
 
-                const peer = new Peer(CANALE_UNICO, peerConfig);
-                currentPeer = peer;
-
-                peer.on('open', (id) => {
-                    setStatus("🔴 IN TRASMISSIONE (ID: " + id + ")", "#ff4d4d");
-                    debugLog("Peer aperto con ID: " + id);
-                });
-
-                peer.on('call', (call) => {
-                    setStatus("📞 PC CONNESSO! Invio video...", "#00ff00");
-                    debugLog("Chiamata ricevuta, rispondo");
-                    
-                    // Rispondi con lo stream
+                peer = new Peer(CHANNEL_ID, config);
+                peer.on('open', id => log("✅ Trasmettitore attivo con ID: " + id));
+                peer.on('call', call => {
+                    log("📞 Chiamata in arrivo! Rispondo...");
                     call.answer(stream);
-                    currentCall = call;
-
-                    // Monitor ICE
-                    call.on('iceState', (state) => {
-                        setIceStatus(state);
-                    });
-
-                    call.on('close', () => {
-                        setStatus("🔴 PC disconnesso", "#ff4d4d");
-                        debugLog("Chiamata chiusa");
-                        currentCall = null;
-                    });
-
-                    call.on('error', (err) => {
-                        debugLog("Errore chiamata: " + err);
-                    });
+                    call.on('close', () => log("🔴 Chiamata chiusa"));
                 });
-
-                peer.on('error', (err) => {
-                    debugLog("Errore peer: " + err.type + " - " + err);
-                    if (err.type === 'unavailable-id') {
-                        alert("ID già in uso! Forse hai già aperto questa pagina su un altro dispositivo?");
-                    }
-                });
-
-                if ('wakeLock' in navigator) {
-                    try {
-                        await navigator.wakeLock.request('screen');
-                    } catch (e) {}
-                }
-
-            } catch (e) {
-                alert("Errore camera: " + e.message);
-                debugLog("Errore camera: " + e.message);
+                peer.on('error', err => log("❌ Errore peer: " + err.type));
+            } catch(e) {
+                log("❌ ERRORE: " + e.message);
             }
         }
 
-        // --- RICEVITORE ---
+        // --- RICEVITORE (PC) ---
         function startReceiver() {
-            cleanup();
-            setStatus("🔍 Cerco segnale...", "#3498db");
-            debugLog("Avvio ricevitore");
-
-            const peer = new Peer(peerConfig);
-            currentPeer = peer;
-
-            peer.on('open', (id) => {
-                debugLog("Peer ricevitore aperto: " + id);
-                attemptCall();
-            });
-
-            peer.on('error', (err) => {
-                debugLog("Errore peer: " + err.type);
-            });
-
-            function attemptCall() {
-                if (!currentPeer) return;
-                setStatus("📞 Tentativo di chiamata...", "#3498db");
-                debugLog("Chiamo " + CANALE_UNICO);
-
-                if (currentCall) currentCall.close();
-
-                const call = peer.call(CANALE_UNICO, new MediaStream());
-                currentCall = call;
-
-                // Timeout
-                const timeout = setTimeout(() => {
-                    if (!video.srcObject) {
-                        debugLog("Timeout, riprovo...");
-                        if (currentCall) currentCall.close();
-                        attemptCall();
-                    }
-                }, 15000);
-
-                call.on('stream', (remoteStream) => {
-                    clearTimeout(timeout);
-                    setStatus("🔵 STREAM RICEVUTO!", "#00ff00");
-                    debugLog("Stream ricevuto, avvio video");
-                    
-                    video.srcObject = remoteStream;
-                    video.play().catch(e => {
-                        debugLog("Autoplay bloccato, attendi click");
-                        setStatus("🔵 CLICCA SUL VIDEO", "#ffff00");
-                        video.addEventListener('click', () => video.play(), { once: true });
+            log("Creo peer ricevitore...");
+            peer = new Peer(config); // ID casuale
+            peer.on('open', id => {
+                log("✅ Ricevitore aperto con ID: " + id);
+                log("📞 Chiamo " + CHANNEL_ID + "...");
+                call = peer.call(CHANNEL_ID, new MediaStream());
+                
+                call.on('stream', remoteStream => {
+                    log("🎥 STREAM RICEVUTO! Avvio video...");
+                    document.getElementById('video').srcObject = remoteStream;
+                    // Prova a riprodurre (autoplay potrebbe essere bloccato)
+                    document.getElementById('video').play().catch(e => {
+                        log("⚠️ Autoplay bloccato, clicca sul video");
+                        document.getElementById('video').addEventListener('click', function play() {
+                            document.getElementById('video').play();
+                            this.removeEventListener('click', play);
+                        });
                     });
                 });
-
-                call.on('iceState', (state) => {
-                    setIceStatus(state);
-                });
-
-                call.on('close', () => {
-                    clearTimeout(timeout);
-                    debugLog("Chiamata chiusa, riconnessione...");
-                    setStatus("🔵 Connessione persa, riprovo...", "#3498db");
-                    video.srcObject = null;
-                    currentCall = null;
-                    setTimeout(attemptCall, 3000);
-                });
-
-                call.on('error', (err) => {
-                    clearTimeout(timeout);
-                    debugLog("Errore chiamata: " + err);
-                    setStatus("🔵 Errore, riprovo...", "#3498db");
-                    video.srcObject = null;
-                    currentCall = null;
-                    setTimeout(attemptCall, 3000);
-                });
-            }
+                
+                call.on('close', () => log("🔴 Chiamata chiusa"));
+                call.on('error', err => log("❌ Errore chiamata: " + err.type));
+            });
+            peer.on('error', err => log("❌ Errore peer: " + err.type));
         }
-
-        // --- TEST LOCALE (due finestre) ---
-        function testLocal() {
-            if (window.confirm("Apri due finestre: una per trasmettere, una per ricevere. Vuoi aprire ora una nuova finestra?")) {
-                window.open(window.location.href, '_blank');
-                // Dopo 2 secondi avvia trasmettitore su questa finestra
-                setTimeout(() => startStreamer(), 2000);
-            }
-        }
-
-        // Avvio automatico se parametro
-        window.onload = () => {
-            const params = new URLSearchParams(window.location.search);
-            if (params.get('mode') === 'receive') {
-                startReceiver();
-            }
-        };
     </script>
 </body>
 </html>
