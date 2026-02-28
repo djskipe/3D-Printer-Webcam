@@ -3,110 +3,110 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Print Hub - Monitor</title>
+    <title>3D Print Hub</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; background: #121212; color: #e0e0e0; font-family: 'Segoe UI', sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
-        .menu { text-align: center; background: #1e1e1e; padding: 30px; border-radius: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-        .hidden { display: none !important; }
-        button { margin: 10px; padding: 15px 30px; border: none; border-radius: 8px; cursor: pointer; font-weight: bold; font-size: 16px; transition: 0.3s; }
-        .btn-stream { background: #e74c3c; color: white; }
-        .btn-view { background: #3498db; color: white; }
-        video { width: 100vw; height: 100vh; object-fit: contain; background: #000; }
-        .status-bar { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 5px; z-index: 100; font-size: 12px; }
-        select { padding: 10px; margin-bottom: 10px; width: 100%; border-radius: 5px; background: #333; color: white; border: 1px solid #444; }
+        body { margin: 0; background: #121212; color: white; font-family: sans-serif; text-align: center; }
+        .container { padding: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; }
+        button { width: 280px; padding: 20px; margin: 10px; border: none; border-radius: 10px; font-size: 18px; font-weight: bold; cursor: pointer; color: white; }
+        .btn-camera { background: #e74c3c; } /* Rosso per trasmettere */
+        .btn-pc { background: #3498db; }     /* Blu per vedere */
+        video { width: 100%; max-width: 800px; border-radius: 10px; background: #000; margin-top: 20px; }
+        select { padding: 10px; border-radius: 5px; margin-bottom: 10px; background: #333; color: white; border: 1px solid #555; }
+        .status { margin-top: 10px; color: #aaa; font-size: 14px; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
 
-    <div id="setup-menu" class="menu">
+    <div id="menu" class="container">
         <h1>3D Print Monitor</h1>
-        <p>Cosa vuoi fare con questo dispositivo?</p>
         
-        <div id="camera-options" class="hidden">
-            <select id="camera-select"></select>
+        <div id="cam-selector">
+            <p>Seleziona Camera (solo per telefono):</p>
+            <select id="camera-list"></select>
         </div>
 
-        <button class="btn-stream" onclick="setupStreamer()">Metti in Streaming (Telefono)</button>
-        <button class="btn-view" onclick="setupReceiver()">Guarda Monitor (PC)</button>
+        <button class="btn-camera" onclick="avviaCamera()">USO COME TELEFONO</button>
+        <button class="btn-pc" onclick="avviaRicevitore()">USO COME PC / FLUIDD</button>
+        
+        <p class="status" id="info">Assicurati di essere in HTTPS</p>
     </div>
 
-    <div id="video-container" class="hidden" style="width: 100%; height: 100%;">
-        <div class="status-bar" id="status">Inizializzazione...</div>
-        <video id="main-video" autoplay playsinline muted></video>
+    <div id="view" class="container hidden">
+        <h2 id="view-title">Inizializzazione...</h2>
+        <video id="video-element" autoplay playsinline muted></video>
+        <button onclick="location.reload()" style="background:#555; width: 150px; padding: 10px;">Indietro</button>
     </div>
 
     <script>
-        const ID_FISSO = 'STAMPANTE-3D-MIA'; // Questo è il "canale" comune
-        const peer = new Peer();
-        const videoElement = document.getElementById('main-video');
-        const setupMenu = document.getElementById('setup-menu');
-        const videoContainer = document.getElementById('video-container');
-        const statusEl = document.getElementById('status');
-        const cameraSelect = document.getElementById('camera-select');
+        const ID_UNICO = "MIA-STAMPANTE-3D-PRO"; // Deve essere uguale per entrambi
+        const videoElement = document.getElementById('video-element');
+        const info = document.getElementById('info');
+        const cameraList = document.getElementById('camera-list');
+        let peer;
 
-        // Carica le camere appena il sito si apre (serve per il telefono)
-        async function loadCameras() {
+        // 1. Carica le camere disponibili (per il telefono)
+        async function getDevices() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-                stream.getTracks().forEach(t => t.stop());
+                await navigator.mediaDevices.getUserMedia({ video: true });
                 const devices = await navigator.mediaDevices.enumerateDevices();
                 const videoDevices = devices.filter(d => d.kind === 'videoinput');
                 videoDevices.forEach(d => {
                     const opt = document.createElement('option');
                     opt.value = d.deviceId;
-                    opt.text = d.label || `Camera ${cameraSelect.length + 1}`;
-                    cameraSelect.appendChild(opt);
+                    opt.text = d.label || `Camera ${cameraList.length + 1}`;
+                    cameraList.appendChild(opt);
                 });
-                document.getElementById('camera-options').classList.remove('hidden');
-            } catch (e) { console.log("Permessi camera non ancora concessi"); }
+            } catch (e) { info.innerText = "Attenzione: Attiva l'HTTPS per usare la camera."; }
         }
-        loadCameras();
+        getDevices();
 
-        // --- FUNZIONE STREAMER (TELEFONO) ---
-        async function setupStreamer() {
-            // Riavvia il Peer con l'ID fisso per farsi trovare
-            peer.destroy();
-            const streamerPeer = new Peer(ID_FISSO);
-            
-            streamerPeer.on('open', async () => {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { deviceId: { exact: cameraSelect.value } },
-                    audio: false
-                });
-                videoElement.srcObject = stream;
-                showVideoUI("🔴 TRASMETTENDO... (ID: " + ID_FISSO + ")");
-                
-                if ('wakeLock' in navigator) navigator.wakeLock.request('screen');
+        // 2. FUNZIONE PER IL TELEFONO (SENDER)
+        async function avviaCamera() {
+            document.getElementById('menu').classList.add('hidden');
+            document.getElementById('view').classList.remove('hidden');
+            document.getElementById('view-title').innerText = "🔴 TRASMETTENDO...";
 
-                streamerPeer.on('call', (call) => {
-                    call.answer(stream); // Invia il video a chi chiama (il PC)
-                });
+            peer = new Peer(ID_UNICO); // Il telefono PRENDE l'ID fisso
+
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { deviceId: { exact: cameraList.value } },
+                audio: false
+            });
+            videoElement.srcObject = stream;
+
+            peer.on('call', (call) => {
+                call.answer(stream); // Risponde inviando il video
+            });
+
+            peer.on('error', (err) => {
+                if(err.type === 'unavailable-id') alert("Errore: L'ID è già in uso. Chiudi altre schede!");
             });
         }
 
-        // --- FUNZIONE RICEVITORE (PC) ---
-        function setupReceiver() {
-            showVideoUI("Connessione alla stampante...");
-            
-            // Il PC prova a chiamare l'ID fisso ogni 3 secondi finché non risponde
-            const tryConnect = () => {
-                const call = peer.call(ID_FISSO, new MediaStream());
+        // 3. FUNZIONE PER IL PC (RECEIVER)
+        function avviaRicevitore() {
+            document.getElementById('menu').classList.add('hidden');
+            document.getElementById('view').classList.remove('hidden');
+            document.getElementById('view-title').innerText = "🔵 RICEVENDO...";
+
+            peer = new Peer(); // Il PC ha un ID casuale
+
+            peer.on('open', () => {
+                // Il PC CHIAMA l'ID fisso del telefono
+                const call = peer.call(ID_UNICO, new MediaStream());
+                
                 call.on('stream', (remoteStream) => {
                     videoElement.srcObject = remoteStream;
-                    videoElement.muted = false; // Se vuoi l'audio della stampa
-                    statusEl.innerText = "🔵 MONITORAGGIO ATTIVO";
+                    videoElement.muted = false; // Se vuoi sentire il rumore dei motori
                 });
-                call.on('error', () => setTimeout(tryConnect, 3000));
-            };
-            
-            setTimeout(tryConnect, 1000);
-        }
+            });
 
-        function showVideoUI(msg) {
-            setupMenu.classList.add('hidden');
-            videoContainer.classList.remove('hidden');
-            statusEl.innerText = msg;
+            peer.on('error', (err) => {
+                info.innerText = "In attesa che il telefono si colleghi...";
+                setTimeout(avviaRicevitore, 3000); // Riprova se il telefono non è ancora online
+            });
         }
     </script>
 </body>
