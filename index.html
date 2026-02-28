@@ -3,102 +3,73 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Streamer Pro - Camera Select</title>
+    <title>3D Print Monitor</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #1a1a1a; color: #eee; margin: 0; padding: 20px; }
-        video { width: 100%; max-width: 500px; border: 2px solid #333; border-radius: 15px; margin-top: 10px; background: #000; }
-        .box { background: #2a2a2a; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); margin-bottom: 20px; }
-        select, input { padding: 10px; border-radius: 5px; border: none; margin: 5px; width: 80%; max-width: 300px; }
-        button { padding: 12px 25px; cursor: pointer; background: #00c853; color: white; border: none; border-radius: 5px; font-weight: bold; transition: 0.3s; }
-        button:hover { background: #00a444; }
-        #my-id { color: #00c853; font-size: 1.2em; }
+        body { margin: 0; background: #000; color: white; font-family: sans-serif; overflow: hidden; }
+        #video-container { width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; }
+        video { width: 100%; height: 100%; object-fit: contain; }
+        .overlay { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); padding: 10px; border-radius: 8px; z-index: 10; }
+        button { background: #e74c3c; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; }
+        select { background: #333; color: white; border: 1px solid #555; padding: 5px; }
     </style>
 </head>
 <body>
 
-    <div class="box">
-        <h1>Cam Streamer</h1>
-        <p>Il tuo ID: <strong id="my-id">Inizializzazione...</strong></p>
-        
-        <label for="camera-select">Scegli Fotocamera:</label><br>
+    <div class="overlay">
+        ID Camera: <strong id="my-id">...</strong><br>
         <select id="camera-select"></select>
-        <br><br>
-
-        <input type="text" id="remote-id" placeholder="Incolla ID del PC">
-        <button onclick="startStreaming()">Avvia Streaming</button>
+        <button id="start-btn">AVVIA MONITOR</button>
     </div>
 
-    <video id="local-video" autoplay playsinline muted></video>
+    <div id="video-container">
+        <video id="view" autoplay playsinline muted></video>
+    </div>
 
     <script>
-        const peer = new Peer();
-        const videoSelect = document.getElementById('camera-select');
-        let localStream;
+        const peer = new Peer('STAMPANTE-3D-MIA'); // ID FISSO così non devi cambiarlo in Fluidd
+        const videoElement = document.getElementById('view');
+        const startBtn = document.getElementById('start-btn');
+        const cameraSelect = document.getElementById('camera-select');
 
-        // 1. Appena il peer è pronto, mostra l'ID
-        peer.on('open', (id) => {
-            document.getElementById('my-id').innerText = id;
-            listCameras(); // Chiedi le camere subito dopo
-        });
-
-        // 2. Funzione per trovare tutte le telecamere (frontali, posteriori, macro...)
-        async function listCameras() {
-            try {
-                // Chiediamo un permesso rapido per "sbloccare" i nomi delle camere
-                const initialStream = await navigator.mediaDevices.getUserMedia({ video: true });
-                initialStream.getTracks().forEach(track => track.stop());
-
-                const devices = await navigator.mediaDevices.enumerateDevices();
-                const videoDevices = devices.filter(device => device.kind === 'videoinput');
-
-                videoSelect.innerHTML = '';
-                videoDevices.forEach((device, index) => {
-                    const option = document.createElement('option');
-                    option.value = device.deviceId;
-                    option.text = device.label || `Camera ${index + 1}`;
-                    videoSelect.appendChild(option);
-                });
-            } catch (err) {
-                console.error("Errore nel listare le camere: ", err);
-                alert("Per favore, dai i permessi alla fotocamera!");
-            }
+        // Carica elenco camere
+        async function getCameras() {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const videoDevices = devices.filter(d => d.kind === 'videoinput');
+            videoDevices.forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.deviceId;
+                opt.text = d.label || 'Camera ' + cameraSelect.length;
+                cameraSelect.appendChild(opt);
+            });
         }
 
-        // 3. Avvia lo streaming con la camera selezionata
-        async function startStreaming() {
-            const remoteId = document.getElementById('remote-id').value;
-            const selectedDeviceId = videoSelect.value;
+        getCameras();
 
-            if (!remoteId) {
-                alert("Inserisci l'ID del destinatario!");
-                return;
+        // Avvia lo streaming
+        startBtn.onclick = async () => {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { deviceId: { exact: cameraSelect.value } },
+                audio: false
+            });
+            videoElement.srcObject = stream;
+            startBtn.style.display = 'none';
+            
+            // Mantieni lo schermo acceso (se supportato)
+            if ('wakeLock' in navigator) {
+                navigator.wakeLock.request('screen');
             }
+        };
 
-            const constraints = {
-                video: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
-                audio: true
-            };
-
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia(constraints);
-                document.getElementById('local-video').srcObject = localStream;
-                
-                // Chiama il PC
-                peer.call(remoteId, localStream);
-                alert("Streaming avviato!");
-            } catch (err) {
-                console.error("Errore nell'avvio: ", err);
-            }
-        }
-
-        // Gestione ricezione (per il PC)
+        // Rispondi automaticamente alla chiamata dal PC/Fluidd
         peer.on('call', (call) => {
-            call.answer();
+            call.answer(videoElement.srcObject);
             call.on('stream', (remoteStream) => {
-                document.getElementById('local-video').srcObject = remoteStream;
+                videoElement.srcObject = remoteStream;
             });
         });
+
+        peer.on('open', (id) => { document.getElementById('my-id').innerText = id; });
     </script>
 </body>
 </html>
