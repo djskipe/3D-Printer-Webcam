@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streamer Camera</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #121212; color: white; }
+        video { width: 90%; max-width: 600px; border-radius: 10px; background: #000; }
+        .controls { margin: 20px; }
+        button { padding: 10px 20px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; }
+    </style>
+</head>
+<body>
+
+    <h1>Cam Streamer</h1>
+    
+    <div id="setup">
+        <p>Il tuo ID: <strong id="my-id">Caricamento...</strong></p>
+        <div class="controls">
+            <input type="text" id="remote-id" placeholder="Inserisci ID per ricevere">
+            <button onclick="connectToPeer()">Connetti</button>
+        </div>
+    </div>
+
+    <video id="local-video" autoplay playsinline muted></video>
+    <video id="remote-video" autoplay playsinline></video>
+
+    <script>
+        const peer = new Peer(); // Crea un nuovo Peer
+        let localStream;
+
+        // Visualizza il proprio ID
+        peer.on('open', (id) => {
+            document.getElementById('my-id').innerText = id;
+        });
+
+        // 1. Funzione per avviare la camera (TELEFONO)
+        async function startCamera() {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            document.getElementById('local-video').srcObject = localStream;
+        }
+
+        // 2. Ricevere una chiamata (Sito che riceve)
+        peer.on('call', (call) => {
+            call.answer(); // Rispondi senza inviare video indietro
+            call.on('stream', (remoteStream) => {
+                document.getElementById('remote-video').srcObject = remoteStream;
+            });
+        });
+
+        // 3. Chiamare qualcuno (Telefono che invia)
+        async function connectToPeer() {
+            const remoteId = document.getElementById('remote-id').value;
+            await startCamera();
+            const call = peer.call(remoteId, localStream);
+            
+            call.on('stream', (remoteStream) => {
+                document.getElementById('remote-video').srcObject = remoteStream;
+            });
+        }
+        
+        // Se sei sul telefono, attiva subito la camera per test
+        // startCamera(); 
+    </script>
+</body>
+</html>
