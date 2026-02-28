@@ -3,86 +3,86 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Monitor Ultra-Fix</title>
+    <title>3D Monitor Direct</title>
     <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { margin: 0; background: #000; color: #0f0; font-family: monospace; text-align: center; }
-        .box { padding: 10px; background: #111; border: 1px solid #333; margin: 10px; }
-        button { padding: 15px; width: 90%; margin: 5px; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
-        #log { font-size: 11px; padding: 10px; text-align: left; height: 150px; overflow-y: auto; border-bottom: 1px solid #333; }
-        video { width: 100%; max-width: 600px; background: #000; }
+        body { margin: 0; background: #000; color: #0f0; font-family: monospace; text-align: center; overflow: hidden; }
+        #status { background: rgba(0,0,0,0.8); padding: 10px; position: fixed; top:0; width: 100%; z-index: 10; font-size: 12px; }
+        video { width: 100vw; height: 100vh; object-fit: contain; }
+        .controls { position: fixed; bottom: 20px; width: 100%; display: flex; justify-content: center; gap: 10px; }
+        button { padding: 15px 25px; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; }
+        .btn-cam { background: #e74c3c; color: white; }
+        .btn-pc { background: #3498db; color: white; }
     </style>
 </head>
 <body>
 
-    <div id="log">SYSTEM READY. USA HTTPS!</div>
+    <div id="status">SISTEMA PRONTO - Carica su HTTPS</div>
     <video id="v" autoplay playsinline muted></video>
 
-    <div class="box">
-        <button style="background: #c0392b; color: white;" onclick="startCamera()">1. AVVIA TELEFONO (RETRO)</button>
-        <button style="background: #2980b9; color: white;" onclick="startPC()">2. AVVIA PC (RICEVI)</button>
+    <div class="controls" id="ui">
+        <button class="btn-cam" onclick="startStreamer()">TRASMETTI (Telefono)</button>
+        <button class="btn-pc" onclick="startReceiver()">RICEVI (PC)</button>
     </div>
 
     <script>
-        const ID_STAMPANTE = "STAMPANTE_PRO_XYZ_123";
-        // Configurazione per saltare i blocchi dei router (Server Google)
-        const config = {
-            'iceServers': [
-                { 'urls': 'stun:stun.l.google.com:19302' },
-                { 'urls': 'stun:stun1.l.google.com:19302' }
-            ]
-        };
-
-        const log = (msg) => { 
-            const l = document.getElementById('log');
-            l.innerHTML += "<br>> " + msg;
-            l.scrollTop = l.scrollHeight;
-        };
+        // --- CONFIGURAZIONE ---
+        const CANALE_UNICO = "STAMPANTE_3D_DI_PRO_XYZ"; // Il tuo "indirizzo" virtuale
+        const config = { 'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] };
         const v = document.getElementById('v');
-        let peer;
+        const status = document.getElementById('status');
+        const ui = document.getElementById('ui');
 
-        async function startCamera() {
-            log("Accesso camera posteriore...");
+        // --- FUNZIONE PER TELEFONO ---
+        async function startStreamer() {
+            ui.style.display = 'none';
+            status.innerText = "Avvio camera posteriore...";
+            
             try {
-                // Proviamo a forzare la camera posteriore
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: { ideal: "environment" } }, 
                     audio: false 
                 });
                 v.srcObject = stream;
-                log("Camera OK sul telefono.");
 
-                peer = new Peer(ID_STAMPANTE, { config: config });
+                const peer = new Peer(CANALE_UNICO, { config: config });
                 
-                peer.on('open', (id) => log("ONLINE! In attesa del PC..."));
+                peer.on('open', () => status.innerText = "🔴 IN TRASMISSIONE... (Canale: " + CANALE_UNICO + ")");
                 peer.on('call', (call) => {
-                    log("Chiamata ricevuta! Invio video...");
+                    status.innerText = "CONNESSO! Invio video...";
                     call.answer(stream);
                 });
                 
-                peer.on('error', (err) => log("ERRORE: " + err.type));
+                peer.on('error', (err) => {
+                    if (err.type === 'unavailable-id') {
+                        alert("L'ID è già occupato! Se hai altre schede aperte, chiudile.");
+                        location.reload();
+                    }
+                });
             } catch (e) {
-                log("ERRORE CAMERA: " + e.message);
+                alert("Errore camera: " + e.message);
+                location.reload();
             }
         }
 
-        function startPC() {
-            log("Connessione...");
-            peer = new Peer({ config: config });
+        // --- FUNZIONE PER PC ---
+        function startReceiver() {
+            ui.style.display = 'none';
+            status.innerText = "Ricerca trasmissione in corso...";
+            const peer = new Peer({ config: config });
 
             peer.on('open', () => {
-                log("PC pronto. Chiamo la stampante...");
-                // Creiamo una chiamata "pulita"
-                const call = peer.call(ID_STAMPANTE, new MediaStream());
-                
-                call.on('stream', (remoteStream) => {
-                    log("!!! VIDEO RICEVUTO !!!");
-                    v.srcObject = remoteStream;
-                    v.play();
-                });
+                // Tenta la connessione ogni 2 secondi finché non trova il telefono
+                const connect = () => {
+                    const call = peer.call(CANALE_UNICO, new MediaStream());
+                    call.on('stream', (remoteStream) => {
+                        status.innerText = "🔵 RICEZIONE ATTIVA";
+                        v.srcObject = remoteStream;
+                        v.play();
+                    });
+                };
+                setInterval(() => { if(!v.srcObject) connect(); }, 2000);
             });
-
-            peer.on('error', (err) => log("ERRORE PC: " + err.type));
         }
     </script>
 </body>
