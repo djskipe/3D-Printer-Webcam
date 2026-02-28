@@ -1,59 +1,133 @@
-const CANALE_UNICO = "STAMPANTE_3D_DI_PRO_XYZ"; 
-        const config = { 'iceServers': [{ 'urls': 'stun:stun.l.google.com:19302' }] };
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Print Monitor PRO</title>
+    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { margin: 0; background: #000; color: #0f0; font-family: 'Courier New', monospace; text-align: center; overflow: hidden; }
+        #status { background: rgba(0,0,0,0.8); padding: 12px; position: fixed; top:0; width: 100%; z-index: 100; font-size: 13px; border-bottom: 1px solid #333; }
+        video { width: 100vw; height: 100vh; object-fit: contain; background: #000; }
+        .controls { position: fixed; bottom: 30px; width: 100%; display: flex; justify-content: center; gap: 15px; z-index: 100; }
+        button { padding: 18px 30px; border: none; border-radius: 8px; font-weight: bold; cursor: pointer; transition: 0.2s; font-size: 16px; }
+        .btn-cam { background: #e74c3c; color: white; box-shadow: 0 4px 15px rgba(231, 76, 60, 0.4); }
+        .btn-pc { background: #3498db; color: white; box-shadow: 0 4px 15px rgba(52, 152, 219, 0.4); }
+        button:active { transform: scale(0.95); }
+    </style>
+</head>
+<body>
+
+    <div id="status">SISTEMA PRONTO - USA HTTPS</div>
+    
+    <video id="v" autoplay playsinline muted></video>
+
+    <div class="controls" id="ui">
+        <button class="btn-cam" onclick="startStreamer()">TELEFONO (Trasmetti)</button>
+        <button class="btn-pc" onclick="startReceiver()">PC (Ricevi)</button>
+    </div>
+
+    <script>
+        // --- CONFIGURAZIONE CANALE ---
+        // Cambia questa stringa se vuoi un canale privato solo tuo
+        const CANALE_UNICO = "MIA_STAMPANTE_3D_XYZ_2024"; 
+        
+        // Server Google per oltrepassare i firewall dei router
+        const peerConfig = {
+            'iceServers': [
+                { 'urls': 'stun:stun.l.google.com:19302' },
+                { 'urls': 'stun:stun1.l.google.com:19302' }
+            ]
+        };
+
         const v = document.getElementById('v');
         const status = document.getElementById('status');
         const ui = document.getElementById('ui');
 
+        // --- LOGICA TRASMETTITORE (TELEFONO) ---
         async function startStreamer() {
             ui.style.display = 'none';
+            status.innerText = "Accesso camera posteriore...";
+            
             try {
+                // Chiediamo specificamente la camera posteriore
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: { ideal: "environment" } }, 
                     audio: false 
                 });
+                
                 v.srcObject = stream;
-                const peer = new Peer(CANALE_UNICO, { config: config });
-                peer.on('open', () => status.innerText = "🔴 TRASMETTENDO...");
+                status.innerText = "Camera OK. Inizializzazione segnale...";
+
+                const peer = new Peer(CANALE_UNICO, { config: peerConfig });
+                
+                peer.on('open', () => {
+                    status.style.color = "#ff4d4d";
+                    status.innerText = "🔴 IN TRASMISSIONE - Lascia questa pagina aperta";
+                });
+
                 peer.on('call', (call) => {
-                    status.innerText = "PC COLLEGATO! Invio in corso...";
+                    status.innerText = "PC CONNESSO! Invio video...";
                     call.answer(stream);
                 });
-            } catch (e) { alert("Errore camera: " + e.message); }
+
+                peer.on('error', (err) => {
+                    if (err.type === 'unavailable-id') {
+                        alert("ID già in uso! Chiudi altre schede aperte.");
+                        location.reload();
+                    }
+                    console.error(err);
+                });
+
+            } catch (e) {
+                alert("ERRORE: " + e.message + "\nAssicurati di aver dato i permessi e di essere in HTTPS.");
+                location.reload();
+            }
         }
 
+        // --- LOGICA RICEVITORE (PC / FLUIDD) ---
         function startReceiver() {
             ui.style.display = 'none';
-            status.innerText = "In attesa del segnale...";
-            const peer = new Peer({ config: config });
+            status.innerText = "Ricerca segnale stampante...";
+            
+            const peer = new Peer({ config: peerConfig });
 
             peer.on('open', () => {
-                // Funzione di chiamata ricorsiva
-                const connect = () => {
-                    if (v.srcObject) return; // Se abbiamo già il video, fermati
-                    
+                const tentativi = setInterval(() => {
+                    if (v.srcObject) {
+                        clearInterval(tentativi);
+                        return;
+                    }
+
+                    status.innerText = "Tentativo di aggancio...";
                     const call = peer.call(CANALE_UNICO, new MediaStream());
                     
                     call.on('stream', (remoteStream) => {
-                        console.log("Stream ricevuto!");
-                        status.innerText = "🔵 VIDEO AGGANCIATO";
+                        status.style.color = "#3498db";
+                        status.innerText = "🔵 VIDEO AGGANCIATO - Clicca se non vedi nulla";
                         v.srcObject = remoteStream;
                         
-                        // TRUCCO: Forza l'esecuzione del video
-                        v.load();
+                        // Forza il play per i browser che bloccano l'autoplay
                         const playPromise = v.play();
                         if (playPromise !== undefined) {
                             playPromise.catch(() => {
-                                status.innerText = "Clicca ovunque per vedere il video";
-                                window.addEventListener('click', () => v.play(), {once: true});
+                                status.innerText = "CLICCA OVUNQUE PER ATTIVARE IL VIDEO";
+                                document.body.addEventListener('click', () => v.play(), {once: true});
                             });
                         }
                     });
-                };
+                }, 3000); // Riprova ogni 3 secondi
+            });
 
-                // Prova a connettersi ogni 2 secondi
-                const interval = setInterval(() => {
-                    if (v.srcObject) clearInterval(interval);
-                    else connect();
-                }, 2000);
+            peer.on('error', (err) => {
+                console.log("Errore Peer PC (normale se il telefono è spento):", err.type);
             });
         }
+
+        // Impedisce allo schermo del telefono di spegnersi (se supportato)
+        if ('wakeLock' in navigator) {
+            navigator.wakeLock.request('screen').catch(() => {});
+        }
+    </script>
+</body>
+</html>
