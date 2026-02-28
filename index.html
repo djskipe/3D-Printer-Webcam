@@ -3,66 +3,102 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Streamer Camera</title>
+    <title>Streamer Pro - Camera Select</title>
     <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
-        body { font-family: sans-serif; text-align: center; background: #121212; color: white; }
-        video { width: 90%; max-width: 600px; border-radius: 10px; background: #000; }
-        .controls { margin: 20px; }
-        button { padding: 10px 20px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; text-align: center; background: #1a1a1a; color: #eee; margin: 0; padding: 20px; }
+        video { width: 100%; max-width: 500px; border: 2px solid #333; border-radius: 15px; margin-top: 10px; background: #000; }
+        .box { background: #2a2a2a; padding: 20px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); margin-bottom: 20px; }
+        select, input { padding: 10px; border-radius: 5px; border: none; margin: 5px; width: 80%; max-width: 300px; }
+        button { padding: 12px 25px; cursor: pointer; background: #00c853; color: white; border: none; border-radius: 5px; font-weight: bold; transition: 0.3s; }
+        button:hover { background: #00a444; }
+        #my-id { color: #00c853; font-size: 1.2em; }
     </style>
 </head>
 <body>
 
-    <h1>Cam Streamer</h1>
-    
-    <div id="setup">
-        <p>Il tuo ID: <strong id="my-id">Caricamento...</strong></p>
-        <div class="controls">
-            <input type="text" id="remote-id" placeholder="Inserisci ID per ricevere">
-            <button onclick="connectToPeer()">Connetti</button>
-        </div>
+    <div class="box">
+        <h1>Cam Streamer</h1>
+        <p>Il tuo ID: <strong id="my-id">Inizializzazione...</strong></p>
+        
+        <label for="camera-select">Scegli Fotocamera:</label><br>
+        <select id="camera-select"></select>
+        <br><br>
+
+        <input type="text" id="remote-id" placeholder="Incolla ID del PC">
+        <button onclick="startStreaming()">Avvia Streaming</button>
     </div>
 
     <video id="local-video" autoplay playsinline muted></video>
-    <video id="remote-video" autoplay playsinline></video>
 
     <script>
-        const peer = new Peer(); // Crea un nuovo Peer
+        const peer = new Peer();
+        const videoSelect = document.getElementById('camera-select');
         let localStream;
 
-        // Visualizza il proprio ID
+        // 1. Appena il peer è pronto, mostra l'ID
         peer.on('open', (id) => {
             document.getElementById('my-id').innerText = id;
+            listCameras(); // Chiedi le camere subito dopo
         });
 
-        // 1. Funzione per avviare la camera (TELEFONO)
-        async function startCamera() {
-            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            document.getElementById('local-video').srcObject = localStream;
+        // 2. Funzione per trovare tutte le telecamere (frontali, posteriori, macro...)
+        async function listCameras() {
+            try {
+                // Chiediamo un permesso rapido per "sbloccare" i nomi delle camere
+                const initialStream = await navigator.mediaDevices.getUserMedia({ video: true });
+                initialStream.getTracks().forEach(track => track.stop());
+
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+                videoSelect.innerHTML = '';
+                videoDevices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `Camera ${index + 1}`;
+                    videoSelect.appendChild(option);
+                });
+            } catch (err) {
+                console.error("Errore nel listare le camere: ", err);
+                alert("Per favore, dai i permessi alla fotocamera!");
+            }
         }
 
-        // 2. Ricevere una chiamata (Sito che riceve)
-        peer.on('call', (call) => {
-            call.answer(); // Rispondi senza inviare video indietro
-            call.on('stream', (remoteStream) => {
-                document.getElementById('remote-video').srcObject = remoteStream;
-            });
-        });
-
-        // 3. Chiamare qualcuno (Telefono che invia)
-        async function connectToPeer() {
+        // 3. Avvia lo streaming con la camera selezionata
+        async function startStreaming() {
             const remoteId = document.getElementById('remote-id').value;
-            await startCamera();
-            const call = peer.call(remoteId, localStream);
-            
-            call.on('stream', (remoteStream) => {
-                document.getElementById('remote-video').srcObject = remoteStream;
-            });
+            const selectedDeviceId = videoSelect.value;
+
+            if (!remoteId) {
+                alert("Inserisci l'ID del destinatario!");
+                return;
+            }
+
+            const constraints = {
+                video: { deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined },
+                audio: true
+            };
+
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia(constraints);
+                document.getElementById('local-video').srcObject = localStream;
+                
+                // Chiama il PC
+                peer.call(remoteId, localStream);
+                alert("Streaming avviato!");
+            } catch (err) {
+                console.error("Errore nell'avvio: ", err);
+            }
         }
-        
-        // Se sei sul telefono, attiva subito la camera per test
-        // startCamera(); 
+
+        // Gestione ricezione (per il PC)
+        peer.on('call', (call) => {
+            call.answer();
+            call.on('stream', (remoteStream) => {
+                document.getElementById('local-video').srcObject = remoteStream;
+            });
+        });
     </script>
 </body>
 </html>
