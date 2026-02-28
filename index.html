@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Print Monitor PRO</title>
+    <title>3D Print Monitor PRO - Fix</title>
     <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
     <style>
         body { margin: 0; background: #000; color: #0f0; font-family: 'Courier New', monospace; text-align: center; overflow: hidden; }
@@ -14,6 +14,7 @@
         .btn-cam { background: #e74c3c; color: white; box-shadow: 0 4px 15px rgba(231, 76, 60, 0.4); }
         .btn-pc { background: #3498db; color: white; box-shadow: 0 4px 15px rgba(52, 152, 219, 0.4); }
         button:active { transform: scale(0.95); }
+        #log { display: none; } /* Nascondi area log */
     </style>
 </head>
 <body>
@@ -29,10 +30,9 @@
 
     <script>
         // --- CONFIGURAZIONE CANALE ---
-        // Cambia questa stringa se vuoi un canale privato solo tuo
         const CANALE_UNICO = "MIA_STAMPANTE_3D_XYZ_2024"; 
         
-        // Server Google per oltrepassare i firewall dei router
+        // Server STUN di Google
         const peerConfig = {
             'iceServers': [
                 { 'urls': 'stun:stun.l.google.com:19302' },
@@ -44,13 +44,19 @@
         const status = document.getElementById('status');
         const ui = document.getElementById('ui');
 
-        // --- LOGICA TRASMETTITORE (TELEFONO) ---
+        // Funzione di log visibile (opzionale)
+        function log(msg) {
+            console.log(msg);
+            // Puoi anche mostrare in un elemento se vuoi
+        }
+
+        // --- TRASMETTITORE (TELEFONO) ---
         async function startStreamer() {
             ui.style.display = 'none';
             status.innerText = "Accesso camera posteriore...";
             
             try {
-                // Chiediamo specificamente la camera posteriore
+                // Richiedi camera posteriore
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { facingMode: { ideal: "environment" } }, 
                     audio: false 
@@ -68,16 +74,34 @@
 
                 peer.on('call', (call) => {
                     status.innerText = "PC CONNESSO! Invio video...";
+                    log("Chiamata ricevuta, rispondo con stream");
                     call.answer(stream);
+                    
+                    // Gestisci chiusura chiamata
+                    call.on('close', () => {
+                        status.innerText = "PC disconnesso, in attesa...";
+                    });
+                    
+                    call.on('error', (err) => {
+                        log("Errore chiamata: " + err);
+                    });
                 });
 
                 peer.on('error', (err) => {
                     if (err.type === 'unavailable-id') {
                         alert("ID già in uso! Chiudi altre schede aperte.");
                         location.reload();
+                    } else {
+                        log("Errore peer: " + err);
                     }
-                    console.error(err);
                 });
+
+                // Mantieni schermo acceso (se supportato)
+                if ('wakeLock' in navigator) {
+                    try {
+                        await navigator.wakeLock.request('screen');
+                    } catch (e) {}
+                }
 
             } catch (e) {
                 alert("ERRORE: " + e.message + "\nAssicurati di aver dato i permessi e di essere in HTTPS.");
@@ -85,49 +109,102 @@
             }
         }
 
-        // --- LOGICA RICEVITORE (PC / FLUIDD) ---
+        // --- RICEVITORE (PC / FLUIDD) ---
         function startReceiver() {
             ui.style.display = 'none';
             status.innerText = "Ricerca segnale stampante...";
             
             const peer = new Peer({ config: peerConfig });
+            let currentCall = null; // Riferimento alla chiamata attuale
 
-            peer.on('open', () => {
-                const tentativi = setInterval(() => {
-                    if (v.srcObject) {
-                        clearInterval(tentativi);
-                        return;
-                    }
-
-                    status.innerText = "Tentativo di aggancio...";
-                    const call = peer.call(CANALE_UNICO, new MediaStream());
-                    
-                    call.on('stream', (remoteStream) => {
-                        status.style.color = "#3498db";
-                        status.innerText = "🔵 VIDEO AGGANCIATO - Clicca se non vedi nulla";
-                        v.srcObject = remoteStream;
-                        
-                        // Forza il play per i browser che bloccano l'autoplay
-                        const playPromise = v.play();
-                        if (playPromise !== undefined) {
-                            playPromise.catch(() => {
-                                status.innerText = "CLICCA OVUNQUE PER ATTIVARE IL VIDEO";
-                                document.body.addEventListener('click', () => v.play(), {once: true});
-                            });
-                        }
-                    });
-                }, 3000); // Riprova ogni 3 secondi
+            peer.on('open', (id) => {
+                log("Peer ricevitore aperto con ID: " + id);
+                connectToStreamer(peer); // Avvia il primo tentativo
             });
 
             peer.on('error', (err) => {
-                console.log("Errore Peer PC (normale se il telefono è spento):", err.type);
+                log("Errore peer PC: " + err.type);
+                // Se il peer muore, ricrea?
             });
+
+            function connectToStreamer(peer) {
+                log("Tentativo di connessione a " + CANALE_UNICO);
+                status.innerText = "Tentativo di aggancio...";
+                
+                // Se c'è già una chiamata attiva, chiudila
+                if (currentCall) {
+                    currentCall.close();
+                }
+
+                // Crea una nuova chiamata (con stream locale vuoto)
+                const call = peer.call(CANALE_UNICO, new MediaStream());
+                currentCall = call;
+
+                // Timeout per evitare tentativi infiniti
+                const timeout = setTimeout(() => {
+                    if (!v.srcObject) {
+                        log("Timeout, riprovo...");
+                        call.close();
+                        connectToStreamer(peer); // Riprova
+                    }
+                }, 10000); // 10 secondi
+
+                call.on('stream', (remoteStream) => {
+                    clearTimeout(timeout);
+                    status.style.color = "#3498db";
+                    status.innerText = "🔵 VIDEO AGGANCIATO - Attendere...";
+                    log("Stream remoto ricevuto!");
+                    
+                    v.srcObject = remoteStream;
+                    
+                    // Tenta la riproduzione (gestisce autoplay bloccato)
+                    const playPromise = v.play();
+                    if (playPromise !== undefined) {
+                        playPromise.then(() => {
+                            status.innerText = "🔵 VIDEO IN RIPRODUZIONE";
+                        }).catch((error) => {
+                            // Autoplay bloccato: chiedi interazione utente
+                            status.innerText = "CLICCA SUL VIDEO PER ATTIVARE";
+                            v.addEventListener('click', function activate() {
+                                v.play();
+                                v.removeEventListener('click', activate);
+                            });
+                        });
+                    }
+                });
+
+                call.on('close', () => {
+                    log("Chiamata chiusa");
+                    if (currentCall === call) {
+                        currentCall = null;
+                        v.srcObject = null;
+                        status.innerText = "Connessione persa, riprovo...";
+                        // Riconnetti dopo un po'
+                        setTimeout(() => connectToStreamer(peer), 3000);
+                    }
+                });
+
+                call.on('error', (err) => {
+                    log("Errore chiamata: " + err);
+                    if (currentCall === call) {
+                        currentCall = null;
+                        v.srcObject = null;
+                        // Riprova
+                        setTimeout(() => connectToStreamer(peer), 3000);
+                    }
+                });
+            }
         }
 
-        // Impedisce allo schermo del telefono di spegnersi (se supportato)
-        if ('wakeLock' in navigator) {
-            navigator.wakeLock.request('screen').catch(() => {});
-        }
+        // Piccola ottimizzazione: se il video è già stato impostato, non mostrare più i controlli
+        // (utile se si ricarica la pagina)
+        window.onload = function() {
+            if (localStorage.getItem('mode') === 'streamer') {
+                startStreamer();
+            } else if (localStorage.getItem('mode') === 'receiver') {
+                startReceiver();
+            }
+        };
     </script>
 </body>
 </html>
