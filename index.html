@@ -1,85 +1,107 @@
 <!DOCTYPE html>
-<html>
+<html lang="it">
 <head>
-    <meta charset="utf-8">
-    <title>Test WebRTC PeerJS</title>
-    <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Print Monitor - REVERSE CALL</title>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
     <style>
-        body { font-family: Arial; padding: 20px; background: #f0f0f0; }
-        video { width: 100%; max-width: 600px; background: black; }
-        button { padding: 10px; margin: 5px; }
-        #status { color: blue; margin: 10px 0; }
+        body { font-family: sans-serif; background: #121212; color: white; text-align: center; padding: 20px; }
+        video { width: 100%; max-width: 500px; background: #000; border-radius: 10px; border: 2px solid #444; }
+        button { padding: 15px; margin: 10px; border-radius: 8px; border: none; font-weight: bold; cursor: pointer; width: 80%; max-width: 300px; background: #27ae60; color: white; }
+        #debug-log { background: #000; color: #00ff00; font-family: monospace; padding: 10px; height: 180px; overflow-y: scroll; font-size: 11px; border: 1px solid #333; text-align: left; margin-top: 20px; }
     </style>
 </head>
 <body>
-    <h2>Test WebRTC con PeerJS</h2>
-    <p>Usa un ID fisso: <strong>TEST_123</strong></p>
-    <button onclick="startStreamer()">📱 TRASMETTI (telefono)</button>
-    <button onclick="startReceiver()">🖥️ RICEVI (PC)</button>
-    <div id="status">⚪ In attesa</div>
-    <video id="video" autoplay playsinline muted></video>
+
+    <h2 id="title">Inizializzazione...</h2>
+    <video id="v" autoplay playsinline muted></video>
+
+    <div id="controls">
+        </div>
+
+    <div id="debug-log"></div>
 
     <script>
-        const CHANNEL_ID = "TEST_123"; // stesso ID per entrambi
-        const config = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
-        let peer, call;
+        const ID_PC = "STAMPANTE_PC";
+        const ID_IPHONE = "IPHONE_STAMPANTE";
+        const isPhone = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+        const logBox = document.getElementById('debug-log');
+        const videoEl = document.getElementById('v');
 
         function log(msg) {
-            document.getElementById('status').innerText = msg;
-            console.log(msg);
+            logBox.innerHTML += `<div>[${new Date().toLocaleTimeString()}] ${msg}</div>`;
+            logBox.scrollTop = logBox.scrollHeight;
         }
 
-        // --- TRASMETTITORE (telefono) ---
-        async function startStreamer() {
-            try {
-                log("Richiedo camera...");
-                const stream = await navigator.mediaDevices.getUserMedia({ 
-                    video: { facingMode: "environment" }, // posteriore
-                    audio: false 
-                });
-                document.getElementById('video').srcObject = stream;
-                log("Camera OK. Creo peer...");
+        const config = {
+            'iceServers': [
+                { 'urls': 'stun:stun.l.google.com:19302' },
+                { 'urls': 'turn:openrelay.metered.ca:80', 'username': 'openrelayproject', 'credential': 'openrelayproject' }
+            ]
+        };
 
-                peer = new Peer(CHANNEL_ID, config);
-                peer.on('open', id => log("✅ Trasmettitore attivo con ID: " + id));
-                peer.on('call', call => {
-                    log("📞 Chiamata in arrivo! Rispondo...");
-                    call.answer(stream);
-                    call.on('close', () => log("🔴 Chiamata chiusa"));
-                });
-                peer.on('error', err => log("❌ Errore peer: " + err.type));
-            } catch(e) {
-                log("❌ ERRORE: " + e.message);
+        const peer = new Peer(isPhone ? ID_IPHONE : ID_PC, { config: config, debug: 2 });
+        let localStream;
+
+        peer.on('open', (id) => {
+            log("✅ Online con ID: " + id);
+            setupUI();
+        });
+
+        function setupUI() {
+            const container = document.getElementById('controls');
+            if (isPhone) {
+                document.getElementById('title').innerText = "📱 TRASMETTITORE (iPhone)";
+                container.innerHTML = `
+                    <button onclick="startCamera()">1. ACCENDI CAMERA</button>
+                    <button onclick="callPC()" style="background:#2980b9">2. TRASMETTI AL PC</button>
+                `;
+            } else {
+                document.getElementById('title').innerText = "💻 RICEVITORE (PC)";
+                log("In attesa di segnale dall'iPhone...");
             }
         }
 
-        // --- RICEVITORE (PC) ---
-        function startReceiver() {
-            log("Creo peer ricevitore...");
-            peer = new Peer(config); // ID casuale
-            peer.on('open', id => {
-                log("✅ Ricevitore aperto con ID: " + id);
-                log("📞 Chiamo " + CHANNEL_ID + "...");
-                call = peer.call(CHANNEL_ID, new MediaStream());
-                
-                call.on('stream', remoteStream => {
-                    log("🎥 STREAM RICEVUTO! Avvio video...");
-                    document.getElementById('video').srcObject = remoteStream;
-                    // Prova a riprodurre (autoplay potrebbe essere bloccato)
-                    document.getElementById('video').play().catch(e => {
-                        log("⚠️ Autoplay bloccato, clicca sul video");
-                        document.getElementById('video').addEventListener('click', function play() {
-                            document.getElementById('video').play();
-                            this.removeEventListener('click', play);
-                        });
-                    });
-                });
-                
-                call.on('close', () => log("🔴 Chiamata chiusa"));
-                call.on('error', err => log("❌ Errore chiamata: " + err.type));
-            });
-            peer.on('error', err => log("❌ Errore peer: " + err.type));
+        async function startCamera() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+                videoEl.srcObject = localStream;
+                log("🎥 Camera pronta.");
+            } catch (e) { log("❌ Errore Camera: " + e.message); }
         }
+
+        function callPC() {
+            if (!localStream) return log("❌ Accendi prima la camera!");
+            log("📞 Chiamata in corso verso il PC...");
+            const call = peer.call(ID_PC, localStream);
+            
+            handleCall(call);
+        }
+
+        peer.on('call', (call) => {
+            log("📞 Chiamata in arrivo dall'iPhone! Rispondo...");
+            call.answer(); 
+            handleCall(call);
+        });
+
+        function handleCall(call) {
+            call.on('stream', (remoteStream) => {
+                log("📺 STREAM RICEVUTO! Avvio video...");
+                videoEl.srcObject = remoteStream;
+                videoEl.play();
+            });
+
+            const pc = call.peerConnection;
+            pc.oniceconnectionstatechange = () => {
+                log("🔌 Stato Connessione: " + pc.iceConnectionState);
+                if(pc.iceConnectionState === 'failed') {
+                    log("❌ Connessione fallita. Il firewall blocca il video.");
+                }
+            };
+        }
+
+        peer.on('error', (err) => log("❌ PeerJS Error: " + err.type));
     </script>
 </body>
 </html>
